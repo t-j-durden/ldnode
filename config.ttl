@@ -1,0 +1,53 @@
+@prefix c: <http://node/config/> .
+@prefix p: <https://person/> .
+
+#publishers
+c:people-publisher a c:Processor;
+    c:class-name "pubsub.Publisher";
+    c:file 'people.csv';
+    c:subject-template '{{first}}' ;
+    c:uri-stub 'https://person/' ;
+    c:type 'https://person/Person' ;
+    c:guess-types true ;
+    c:on p:publish ;
+.
+
+#consumers
+c:load-people a c:Processor;
+    c:class-name "pubsub.Consumer";
+    c:target 'http://localhost:8899/publisher/people-publisher' ;
+    c:cron '*/1 * * * *' ;
+    c:raise  p:data_added  ;
+.
+
+
+#processors
+c:construct-fullname c:class-name "processors.ConstructProcessor" ;
+   a c:Processor ;
+   c:sparql '''CONSTRUCT {?s <https://person/fullname> ?fullname}
+                WHERE
+                {
+                    ?s <https://person/first> ?first;
+                        <https://person/last> ?last;
+                        BIND(CONCAT(?first, " ",  ?last) AS ?fullname)
+                } ''' ;
+   c:on p:data_added ;
+   c:raise p:full-named-created  ;
+.
+
+c:scheduler c:class-name "processors.Scheduler" ;
+   a c:Processor ;
+.
+
+#queries
+p:people a c:Query;
+    c:sparql '''
+    SELECT DISTINCT ?name ?age
+    WHERE {
+        ?s <https://person/fullname> ?name .
+        ?s <https://person/age> ?age .
+        {{#if min-age}}
+        FILTER(?age >= {{min-age}} )
+        {{/if}}
+        } ''';
+.
