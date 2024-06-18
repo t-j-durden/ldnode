@@ -1,0 +1,170 @@
+#Consolidate: combine a number of subjects into a single more coherent whole
+#We can get multiple types extracting the same passage of text and giving it the same name/label. This could be a mistake or it could be legitimate. Text is very rich in meaning and could relate to multiple concepts. If the multiple concepts are legitimate, then we walk up the inheritance tree until we find an abstract concept that is at the root of all the types. The worst case is that you get to the top of the tree, the 'Thing'. When you have found the lowest common ancestor in the inheritance tree, you can merge the subjects and mint a new URI under the URI namespace of that type. Using multiple inheritance, the subject keeps its pointers to the original types (plus the new abstract type), and all the properties from the types are thus merged into this subject.
+
+@custom_function(URIRef("http://getbluemorpho.com/functions/localname"), override=True)
+def localname(uri, put_spaces_back_in=False):
+    return Literal(short_name(uri, put_spaces_back_in=put_spaces_back_in))
+
+def consolidate_lists(data):
+    normalized_lists = {tuple(sorted(lst)) for lst in data}
+    return normalized_lists
+
+
+def find_common_ancestor(nodes, log=False):
+    def find_path_to_root(node):
+        path = []
+        while node:
+            path.append(node)
+            node = node.parent
+        return path
+    
+    # Find paths from each node to the root
+    paths = [find_path_to_root(node) for node in nodes]
+    if log:
+        print(f'paths: {paths}')
+    
+    #TODO: check if all nodes just lead to one subclass if so select that
+
+    # Reverse paths so that they start from the root
+    reversed_paths = [list(reversed(path)) for path in paths]
+
+    # Find the common ancestor by comparing the reversed paths
+    lowest_common_parent = None
+    for ancestors in zip(*reversed_paths):
+        if all(ancestor == ancestors[0] for ancestor in ancestors):
+            lowest_common_parent = ancestors[0]
+        else:
+            break
+
+    return lowest_common_parent
+
+def consolidate_graph(g:Graph, ontology, log=False):
+    new_g = new_graph()
+    
+    # first we add sameAs links for anything that has the same uri localname/slug
+    same_as = g.query("""
+    CONSTRUCT {
+      ?s1 :sameAs ?s2 .
+    }
+    WHERE {
+        ?s1 a ?t1 .
+        ?s2 a ?t2 .
+        FILTER (?s1 != ?s2) .
+        FILTER (bmf:localname(?s1, true) = bmf:localname(?s2, true)) .
+    }""").graph
+    new_g = g + same_as
+
+    
+    # Now we have the links, let's pull out all connected classes.
+    # This query groups the subjects by those that have a sameAs
+    # link into a comma-separated array.
+    linked = new_g.query("""
+        SELECT DISTINCT (GROUP_CONCAT(DISTINCT ?uri; separator=",") AS ?others)
+        WHERE {
+          {
+            ?subject :sameAs ?other .
+            BIND(STR(?subject) AS ?uri)
+          } UNION {
+            ?subject :sameAs ?other .
+            BIND(STR(?other) AS ?uri)
+          }
+        }
+        GROUP BY ?subject
+        """)
+    
+    # we turn this into a python array of arrays and remove dups
+    uri_groups = []
+    for row in linked:
+        others = str(row['others']).split(',')
+        uri_groups.append(others)
+    uri_groups = consolidate_lists(uri_groups)
+    
+    # now we get it to a tree so we can find the common ancestor 
+    # thik of this like searching an an evloilutiopnary tree 
+    # only here we are looking through the class hyarrch and 
+    # trying to say as low and spesdic as we can
+    tree = ontology.to_tree(shortname=False)
+    for group in uri_groups:
+        if log:
+            print(f'** GROUP: {group} **')
+        class_map = {}
+        nodes=[]
+        
+        # each each URI find the node from the tree and add 
+        # them into a list
+        for uri in group:
+            class_uri = str(g.value(URIRef(uri),  RDF.type))
+            if log:
+                print(f'{uri} : {class_uri}')
+            class_map[uri] = class_uri
+            node = tree[class_uri]
+            nodes.append(node)
+        
+        # find the common ancestor of this list of nodes, get its
+        # Class object and create a graph that we can merge data into
+        common_ancestor_uri = find_common_ancestor(nodes).name
+        if log:
+            print(f'common ancestor: {common_ancestor_uri}')
+        common_ancestor_uriref = URIRef(common_ancestor_uri)
+        common_ancestor = ontology.get_class(common_ancestor_uri)
+        common_ancestor_graph = new_graph()
+        
+        # Now we need to mint or match a URI from this common_ancestor class
+        # for the data we have in this record
+        
+        #TODO: for now we just pick the first example 
+        example_uri = group[0]
+        #we get the graph of data we have about this item
+        item_graph = n_hop(g=new_g, uri=example_uri, n=1)
+        #TODO: we just mint for now ((we will need to lookup as well)
+        new_uri = common_ancestor.mint_uri(short_name(example_uri))
+        # this is the new URI of this subject
+        new_uriref = URIRef(new_uri)
+        if log:
+            print(f'New URI: {new_uri}')
+        
+        # now we can update the graph by creating a new merged record
+        # for this common ancestor. It will contain the merged data
+        # from all the other sujects
+        for uri in group:
+            uriref = URIRef(uri)
+            # we copy over the triples into the new common_ancestor_graph
+            for s, p, obj in new_g.triples((uriref, None, None)):
+                new_g.remove((s,p,obj))
+                if p != ex.sameAs:
+                    # see if we already have a value for this in the new item we are building
+                    value = common_ancestor_graph.value((new_uriref, p, None))
+                    # if not then add it
+                    #TODO: we need better merging here will need to use the LLM
+                    #TODO: this code should be the same as the merge() method (need to refactor)
+                    if (value is None or str(o).startswith('http')):
+                        common_ancestor_graph.add((new_uriref, p, obj))
+            
+            # replace any links so they now point to the merged subject
+            for s, p, obj in new_g.triples((None, None, uriref)):
+                new_g.remove((s,p,obj))
+                new_g.add((s,p,new_uriref))
+        
+        # add the new common_ancestor_graph to the graph
+        new_g = new_g + common_ancestor_graph
+
+    
+    return new_g
+        
+ont = Ontology('''
+    :Thing a rdfs:Class . 
+    :Animal a rdfs:Class; rdfs:subClassOf :Thing .
+    :Person a rdfs:Class; rdfs:subClassOf :Animal . 
+    :Dog a rdfs:Class; rdfs:subClassOf :Animal . 
+    :Rock a rdfs:Class; rdfs:subClassOf :Thing .
+'''))        
+g = new_graph('''
+        <https://test.com/person/test> a :Person; :name "test".
+        <https://test.com/dog/test>  a :Dog; :name "test"; :pet <https://test.com/dog/beb>.
+        <https://test.com/rock/test> a :Rock; :name "test".
+        <https://test.com/dog/beb> a :Dog; :name "beb".
+        <https://test.com/person/beb> a :Person; :name "beb".
+        ''')
+
+g = consolidate_graph(g, ont, log=True)
+print(to_text(g))
