@@ -1,0 +1,35 @@
+# use langchain to load the docs
+from langchain.document_loaders import WikipediaLoader
+
+
+# load the ontology
+with(open('./Ontologies/scientists.ttl')) as f:
+	scientists = Ontology(f.read())
+scientists.get('Award').template = 'http://example.org/schema/Award/{name}-{awardField}-{year}'
+scientists.get('Event').template = 'http://example.org/schema/Event/{name}-{date}'
+
+
+# set the wiki pages to load
+titles = [
+    "Marie Curie",
+    "Albert Einstein",
+    "Richard Feynman",
+    "Niels Bohr",
+    "Subrahmanyan Chandrasekhar"
+]
+
+
+# Load the Wikipedia pages and and extract the text using the ontology
+for title in titles:
+    docs = WikipediaLoader(query=title, load_max_docs=1).load()
+    for document in docs:
+        text = document.page_content
+        if text != '':
+            graph = extract(text, scientists)
+
+
+# now you can query the graph
+display_query("list all the names of all the Scientists")
+display_query"list all data about marie curie")
+display_query("list the classes")
+.. etc
