@@ -1,7 +1,7 @@
 #Consolidate: combine a number of subjects into a single more coherent whole
 #We can get multiple types extracting the same passage of text and giving it the same name/label. This could be a mistake or it could be legitimate. Text is very rich in meaning and could relate to multiple concepts. If the multiple concepts are legitimate, then we walk up the inheritance tree until we find an abstract concept that is at the root of all the types. The worst case is that you get to the top of the tree, the 'Thing'. When you have found the lowest common ancestor in the inheritance tree, you can merge the subjects and mint a new URI under the URI namespace of that type. Using multiple inheritance, the subject keeps its pointers to the original types (plus the new abstract type), and all the properties from the types are thus merged into this subject.
 
-@custom_function(URIRef("http://getbluemorpho.com/functions/localname"), override=True)
+@custom_function(URIRef("http://x.com/functions/localname"), override=True)
 def localname(uri, put_spaces_back_in=False):
     return Literal(short_name(uri, put_spaces_back_in=put_spaces_back_in))
 
